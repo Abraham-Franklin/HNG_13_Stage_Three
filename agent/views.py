@@ -4,6 +4,26 @@ from rest_framework.response import Response
 from rest_framework import status
 import requests
 # Create your views here.
+class GeoNationManifestView(APIView):
+    """
+    Telex Agent manifest endpoint — describes your agent to Telex.im.
+    """
+
+    def get(self, request):
+        data = {
+            "name": "GeoNation",
+            "description": "GeoNation helps you identify the country a town or city belongs to.",
+            "type": "A2A",
+            "version": "1.0.0",
+            "author": "Okumbor Franklin",
+            "endpoints": {
+                "primary": "https://abrahamfranklinao.pythonanywhere.com/agent/",
+            },
+            "tags": ["geolocation", "country lookup", "maps", "OpenStreetMap"]
+        }
+        return Response(data, status=status.HTTP_200_OK)
+
+
 class GeoNationAgentView(APIView):
     """
     A2A-compatible endpoint for Telex.im.
