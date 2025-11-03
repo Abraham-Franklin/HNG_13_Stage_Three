@@ -77,16 +77,10 @@ class GeoNationManifestView(APIView):
             logger.exception("Error processing manifest request.")
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-
 class GeoNationAgentView(APIView):
     """
-    GeoNation agent logic endpoint — receives Telex A2A POST calls and returns country information.
+    GeoNation agent logic endpoint — handles both Telex RPC and manual calls.
     """
-
-    def get(self, request):
-        """Simple GET endpoint to verify that the agent endpoint is active."""
-        logger.info("Health check request received at /agent/")
-        return Response({"message": "GeoNation Agent is running!"}, status=status.HTTP_200_OK)
 
     def post(self, request):
         logger.info("=== Incoming Request to /agent/ ===")
@@ -94,43 +88,61 @@ class GeoNationAgentView(APIView):
         logger.info(f"Headers: {dict(request.headers)}")
 
         try:
-            body_str = request.body.decode("utf-8")
-            logger.debug(f"Raw Body: {body_str}")
-        except Exception:
-            body_str = "<unreadable>"
+            raw_body = request.body.decode("utf-8")
+            logger.debug(f"Raw Body: {raw_body[:500]}")
 
-        logger.info(f"Parsed Body: {json.dumps(request.data, indent=2)}")
+            # Try parsing body if it's nested JSON
+            data = request.data
+            if isinstance(data, str):
+                try:
+                    data = json.loads(data)
+                    logger.info("Parsed string body as JSON successfully.")
+                except Exception:
+                    logger.warning("Could not parse stringified JSON body.")
 
-        data = request.data
-        query = (
-            data.get("params", {}).get("query")
-            or data.get("query")
-            or data.get("message")
-        )
+            # If nested JSON under params → message → parts
+            if "params" in data and isinstance(data["params"], dict):
+                params = data["params"]
+                if "message" in params and isinstance(params["message"], dict):
+                    message = params["message"]
+                    parts = message.get("parts", [])
+                    for part in parts:
+                        if part.get("kind") == "text":
+                            text_value = part.get("text", "").strip()
+                            if "/geonation_agent" in text_value:
+                                query = text_value.replace("/geonation_agent", "").strip()
+                                break
+                            elif "query" in text_value:
+                                # Try to load any embedded JSON string
+                                try:
+                                    embedded = json.loads(text_value)
+                                    query = embedded.get("params", {}).get("query")
+                                    if query:
+                                        break
+                                except Exception:
+                                    pass
+                            else:
+                                query = text_value
+                                break
+                    else:
+                        query = None
+                else:
+                    # fallback for direct "query" in params
+                    query = params.get("query")
+            else:
+                # fallback for direct top-level query
+                query = data.get("query") or data.get("message")
 
-        # Handle Telex A2A structured message format
-        if not query:
-            message = data.get("params", {}).get("message", {})
-            parts = message.get("parts", [])
-            if parts and isinstance(parts, list):
-                for part in parts:
-                    if part.get("kind") == "text" and "text" in part:
-                        text_value = part["text"].strip()
-                        if text_value.startswith("/geonation_agent"):
-                            query = text_value.replace("/geonation_agent", "").strip()
-                        else:
-                            query = text_value
-                        break
+            if not query:
+                logger.warning("No query provided in agent request.")
+                return Response(
+                    {"error": "No query provided. Include 'query' or 'message'."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
-        if not query:
-            logger.warning("No query provided in agent request.")
-            return Response(
-                {"error": "No query provided. Include 'query' or 'message'."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            logger.info(f"Extracted Query: {query}")
 
-        try:
-            # ✅ Query OpenStreetMap API
+            # 🔍 Query OpenStreetMap API
             headers = {"User-Agent": "GeoNation/1.0 (contact: okumborfranklin@gmail.com)"}
             response = requests.get(
                 "https://nominatim.openstreetmap.org/search",
@@ -141,13 +153,10 @@ class GeoNationAgentView(APIView):
 
             logger.info(f"Nominatim URL: {response.url}")
             logger.info(f"Nominatim Status: {response.status_code}")
-            logger.debug(f"Nominatim Response: {response.text[:400]}")
-
             response.raise_for_status()
-            results = response.json()
 
+            results = response.json()
             if not results:
-                logger.warning(f"No results found for '{query}'.")
                 return Response(
                     {"error": f"Could not find location '{query}'."},
                     status=status.HTTP_404_NOT_FOUND
@@ -165,20 +174,117 @@ class GeoNationAgentView(APIView):
             }
 
             response_payload = {"result": result, "id": data.get("id", "1")}
-            logger.info(f"Responding to Telex with: {json.dumps(response_payload, indent=2)}")
+            logger.info(f"Responding with: {json.dumps(response_payload, indent=2)}")
 
             return Response(response_payload, status=status.HTTP_200_OK)
 
-        except requests.RequestException:
-            logger.exception("Error fetching data from OpenStreetMap.")
-            return Response(
-                {"error": "Failed to fetch data from OpenStreetMap."},
-                status=status.HTTP_502_BAD_GATEWAY
-            )
-
         except Exception as e:
-            logger.exception("Unexpected error in GeoNationAgentView.")
+            logger.exception("Error handling /agent/ request.")
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+# class GeoNationAgentView(APIView):
+#     """
+#     GeoNation agent logic endpoint — receives Telex A2A POST calls and returns country information.
+#     """
+
+#     def get(self, request):
+#         """Simple GET endpoint to verify that the agent endpoint is active."""
+#         logger.info("Health check request received at /agent/")
+#         return Response({"message": "GeoNation Agent is running!"}, status=status.HTTP_200_OK)
+
+#     def post(self, request):
+#         logger.info("=== Incoming Request to /agent/ ===")
+#         logger.info(f"Timestamp: {now()}")
+#         logger.info(f"Headers: {dict(request.headers)}")
+
+#         try:
+#             body_str = request.body.decode("utf-8")
+#             logger.debug(f"Raw Body: {body_str}")
+#         except Exception:
+#             body_str = "<unreadable>"
+
+#         logger.info(f"Parsed Body: {json.dumps(request.data, indent=2)}")
+
+#         data = request.data
+#         query = (
+#             data.get("params", {}).get("query")
+#             or data.get("query")
+#             or data.get("message")
+#         )
+
+#         # Handle Telex A2A structured message format
+#         if not query:
+#             message = data.get("params", {}).get("message", {})
+#             parts = message.get("parts", [])
+#             if parts and isinstance(parts, list):
+#                 for part in parts:
+#                     if part.get("kind") == "text" and "text" in part:
+#                         text_value = part["text"].strip()
+#                         if text_value.startswith("/geonation_agent"):
+#                             query = text_value.replace("/geonation_agent", "").strip()
+#                         else:
+#                             query = text_value
+#                         break
+
+#         if not query:
+#             logger.warning("No query provided in agent request.")
+#             return Response(
+#                 {"error": "No query provided. Include 'query' or 'message'."},
+#                 status=status.HTTP_400_BAD_REQUEST
+#             )
+
+#         try:
+#             # ✅ Query OpenStreetMap API
+#             headers = {"User-Agent": "GeoNation/1.0 (contact: okumborfranklin@gmail.com)"}
+#             response = requests.get(
+#                 "https://nominatim.openstreetmap.org/search",
+#                 params={"q": query, "format": "json"},
+#                 headers=headers,
+#                 timeout=10
+#             )
+
+#             logger.info(f"Nominatim URL: {response.url}")
+#             logger.info(f"Nominatim Status: {response.status_code}")
+#             logger.debug(f"Nominatim Response: {response.text[:400]}")
+
+#             response.raise_for_status()
+#             results = response.json()
+
+#             if not results:
+#                 logger.warning(f"No results found for '{query}'.")
+#                 return Response(
+#                     {"error": f"Could not find location '{query}'."},
+#                     status=status.HTTP_404_NOT_FOUND
+#                 )
+
+#             location = results[0]
+#             display_name = location.get("display_name", "")
+#             country = display_name.split(",")[-1].strip() if display_name else "Unknown"
+
+#             result = {
+#                 "place": query,
+#                 "country": country,
+#                 "lat": location.get("lat"),
+#                 "lon": location.get("lon")
+#             }
+
+#             response_payload = {"result": result, "id": data.get("id", "1")}
+#             logger.info(f"Responding to Telex with: {json.dumps(response_payload, indent=2)}")
+
+#             return Response(response_payload, status=status.HTTP_200_OK)
+
+#         except requests.RequestException:
+#             logger.exception("Error fetching data from OpenStreetMap.")
+#             return Response(
+#                 {"error": "Failed to fetch data from OpenStreetMap."},
+#                 status=status.HTTP_502_BAD_GATEWAY
+#             )
+
+#         except Exception as e:
+#             logger.exception("Unexpected error in GeoNationAgentView.")
+#             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 
