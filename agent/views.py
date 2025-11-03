@@ -7,7 +7,20 @@ from rest_framework.response import Response
 from rest_framework import status
 
 # Use the "agent" logger defined in settings.py
+# logger = logging.getLogger("agent")
+
+
+# ✅ Configure logging for both console (Railway logs) and file
 logger = logging.getLogger("agent")
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler("geonation.log"),  # saves logs to file in container
+        logging.StreamHandler()  # sends logs to console → visible in Railway dashboard
+    ]
+)
 
 
 class GeoNationManifestView(APIView):
