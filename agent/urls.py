@@ -12,5 +12,5 @@ from .views import GeoNationAgentView, GeoNationManifestView
 urlpatterns = [
     path("", GeoNationManifestView.as_view(), name="manifest"),
     path("agent/", GeoNationAgentView.as_view(), name="agent-view"),
-    # path("agent", GeoNationAgentView.as_view(), name="agent-view"),
+    path("agent", GeoNationAgentView.as_view(), name="agent-view"),
 ]
