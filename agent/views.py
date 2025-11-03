@@ -1,186 +1,103 @@
 import json
 import logging
 import requests
-from django.utils.timezone import now
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 
+logger = logging.getLogger(__name__)
 
-# ✅ Use the custom "agent" logger defined in settings.py
-logger = logging.getLogger("agent")
-
-
-class GeoNationManifestView(APIView):
+def extract_query(data):
     """
-    Telex Agent manifest endpoint — describes your agent to Telex.im.
+    Extracts the 'query' or 'message' from multiple possible JSON structures.
     """
+    if not isinstance(data, dict):
+        return None
 
-    def get(self, request):
-        """Simple GET endpoint to verify that the service is live."""
-        logger.info("Health check request received at /")
-        return Response({"message": "GeoNation API is live!"}, status=status.HTTP_200_OK)
+    # Direct key lookup
+    if 'query' in data:
+        return data['query']
+    if 'message' in data:
+        return data['message']
 
-    def post(self, request):
-        logger.info("=== Incoming Request to / (Manifest) ===")
-        logger.info(f"Timestamp: {now()}")
-        logger.info(f"Headers: {dict(request.headers)}")
-        logger.info(f"Body: {json.dumps(request.data, indent=2)}")
+    # Inside 'params'
+    params = data.get('params', {})
+    if isinstance(params, dict):
+        if 'query' in params:
+            return params['query']
+        if 'message' in params:
+            return params['message']
 
-        try:
-            # Extract the query text
-            method = request.data.get("method")
-            params = request.data.get("params", {})
-            query = params.get("query") or request.data.get("query") or request.data.get("message")
+    # Inside nested 'data' array
+    if 'data' in data and isinstance(data['data'], list):
+        for item in data['data']:
+            q = extract_query(item)
+            if q:
+                return q
 
-            if not query:
-                logger.warning("No query provided in manifest request.")
-                return Response(
-                    {"message": "Please provide the name of a city or town you'd like to know the country for!"},
-                    status=status.HTTP_200_OK
-                )
+    return None
 
-            # ✅ Query OpenStreetMap Nominatim API
-            headers = {"User-Agent": "GeoNation/1.0 (contact: okumborfranklin@gmail.com)"}
-            url = f"https://nominatim.openstreetmap.org/search?q={query}&format=json"
-            res = requests.get(url, headers=headers, timeout=10)
 
-            logger.info(f"Nominatim Request URL: {res.url}")
-            logger.info(f"Nominatim Response Code: {res.status_code}")
-            logger.debug(f"Nominatim Raw Response: {res.text[:400]}")
-
-            if res.status_code != 200 or not res.json():
-                logger.warning(f"No results found for '{query}'.")
-                return Response(
-                    {"message": f"Sorry, I couldn’t find the country for '{query}'."},
-                    status=status.HTTP_404_NOT_FOUND
-                )
-
-            data = res.json()[0]
-            display_name = data.get("display_name", "")
-            country = display_name.split(",")[-1].strip() if display_name else "Unknown"
-
-            result = {
-                "place": query,
-                "country": country,
-                "lat": data.get("lat"),
-                "lon": data.get("lon"),
-            }
-
-            response_text = f"{query} is located in {country}. 🌍 (Lat: {data.get('lat')}, Lon: {data.get('lon')})"
-            response_data = {"result": result, "message": response_text, "id": request.data.get("id")}
-
-            logger.info(f"Response to Telex: {json.dumps(response_data, indent=2)}")
-            return Response(response_data, status=status.HTTP_200_OK)
-
-        except Exception as e:
-            logger.exception("Error processing manifest request.")
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-class GeoNationAgentView(APIView):
+class AgentView(APIView):
     """
-    GeoNation agent logic endpoint — handles both Telex RPC and manual calls.
+    Handles incoming POST requests from the GeoNation Agent.
+    Extracts query from the request body and returns the corresponding country.
     """
 
     def post(self, request):
-        logger.info("=== Incoming Request to /agent/ ===")
-        logger.info(f"Timestamp: {now()}")
-        logger.info(f"Headers: {dict(request.headers)}")
-
         try:
+            # Log raw request
             raw_body = request.body.decode("utf-8")
-            logger.debug(f"Raw Body: {raw_body[:500]}")
+            logger.info(f"=== Incoming Request ===\nPath: {request.path}\nBody: {raw_body}")
 
-            # Try parsing body if it's nested JSON
-            data = request.data
-            if isinstance(data, str):
-                try:
-                    data = json.loads(data)
-                    logger.info("Parsed string body as JSON successfully.")
-                except Exception:
-                    logger.warning("Could not parse stringified JSON body.")
+            try:
+                data = json.loads(raw_body or "{}")
+            except json.JSONDecodeError:
+                logger.exception("Invalid JSON in request body")
+                return Response({"error": "Invalid JSON body"}, status=status.HTTP_400_BAD_REQUEST)
 
-            # If nested JSON under params → message → parts
-            if "params" in data and isinstance(data["params"], dict):
-                params = data["params"]
-                if "message" in params and isinstance(params["message"], dict):
-                    message = params["message"]
-                    parts = message.get("parts", [])
-                    for part in parts:
-                        if part.get("kind") == "text":
-                            text_value = part.get("text", "").strip()
-                            if "/geonation_agent" in text_value:
-                                query = text_value.replace("/geonation_agent", "").strip()
-                                break
-                            elif "query" in text_value:
-                                # Try to load any embedded JSON string
-                                try:
-                                    embedded = json.loads(text_value)
-                                    query = embedded.get("params", {}).get("query")
-                                    if query:
-                                        break
-                                except Exception:
-                                    pass
-                            else:
-                                query = text_value
-                                break
-                    else:
-                        query = None
-                else:
-                    # fallback for direct "query" in params
-                    query = params.get("query")
-            else:
-                # fallback for direct top-level query
-                query = data.get("query") or data.get("message")
-
+            query = extract_query(data)
             if not query:
-                logger.warning("No query provided in agent request.")
+                logger.warning("No query provided in request")
                 return Response(
                     {"error": "No query provided. Include 'query' or 'message'."},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            logger.info(f"Extracted Query: {query}")
+            # Call external API (RestCountries)
+            api_url = f"https://restcountries.com/v3.1/capital/{query}"
+            response = requests.get(api_url, timeout=10)
 
-            # 🔍 Query OpenStreetMap API
-            headers = {"User-Agent": "GeoNation/1.0 (contact: okumborfranklin@gmail.com)"}
-            response = requests.get(
-                "https://nominatim.openstreetmap.org/search",
-                params={"q": query, "format": "json"},
-                headers=headers,
-                timeout=10
-            )
-
-            logger.info(f"Nominatim URL: {response.url}")
-            logger.info(f"Nominatim Status: {response.status_code}")
-            response.raise_for_status()
-
-            results = response.json()
-            if not results:
+            if response.status_code != 200:
+                logger.error(f"External API error ({response.status_code}): {response.text}")
                 return Response(
-                    {"error": f"Could not find location '{query}'."},
+                    {"error": "Failed to fetch country data"},
+                    status=response.status_code
+                )
+
+            countries = response.json()
+            if not countries:
+                logger.info(f"No country found for query: {query}")
+                return Response(
+                    {"message": f"No country found for '{query}'."},
                     status=status.HTTP_404_NOT_FOUND
                 )
 
-            location = results[0]
-            display_name = location.get("display_name", "")
-            country = display_name.split(",")[-1].strip() if display_name else "Unknown"
+            # Extract readable name
+            country_name = countries[0].get("name", {}).get("common", "Unknown")
+            logger.info(f"Country found for '{query}': {country_name}")
 
-            result = {
-                "place": query,
-                "country": country,
-                "lat": location.get("lat"),
-                "lon": location.get("lon")
-            }
-
-            response_payload = {"result": result, "id": data.get("id", "1")}
-            logger.info(f"Responding with: {json.dumps(response_payload, indent=2)}")
-
-            return Response(response_payload, status=status.HTTP_200_OK)
+            # Success response
+            return Response({"country": country_name}, status=status.HTTP_200_OK)
 
         except Exception as e:
-            logger.exception("Error handling /agent/ request.")
+            logger.exception(f"Unhandled error: {str(e)}")
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+
+
 
 
 
