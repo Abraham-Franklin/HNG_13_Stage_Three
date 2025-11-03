@@ -147,7 +147,17 @@ class GeoNationAgentView(APIView):
         try:
             url = f"https://nominatim.openstreetmap.org/search"
             params = {"q": query, "format": "json", "limit": 1}
-            response = requests.get(url, params=params)
+            # response = requests.get(url, params=params)
+            headers = {
+                "User-Agent": "GeoNation/1.0 (okumborfranklin@gmail.com)"  # must include email or app name
+            }
+            response = requests.get(
+                "https://nominatim.openstreetmap.org/search",
+                params={"q": query, "format": "json"},
+                headers=headers,
+                timeout=10
+            )
+
             response.raise_for_status()
             results = response.json()
 
