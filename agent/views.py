@@ -72,51 +72,105 @@ class GeoNationManifestView(APIView):
     #     return Response(data, status=status.HTTP_200_OK)
 
 
-class GeoNationAgentView(APIView):
-    """
-    A2A-compatible endpoint for Telex.im.
-    Receives JSON payloads with {method, params, id}
-    and returns the corresponding country of a given city/town.
-    """
+# class GeoNationAgentView(APIView):
+#     """
+#     A2A-compatible endpoint for Telex.im.
+#     Receives JSON payloads with {method, params, id}
+#     and returns the corresponding country of a given city/town.
+#     """
 
+#     def post(self, request):
+#         try:
+#             method = request.data.get("method")
+#             params = request.data.get("params", {})
+#             query = params.get("query")
+
+#             if not query:
+#                 return Response(
+#                     {"error": "Missing 'query' parameter"},
+#                     status=status.HTTP_400_BAD_REQUEST
+#                 )
+
+#             url = f"https://nominatim.openstreetmap.org/search?q={query}&format=json"
+#             headers = {"User-Agent": "GeoNation-Agent/1.0"}
+#             res = requests.get(url, headers=headers)
+
+#             if res.status_code != 200 or not res.json():
+#                 return Response(
+#                     {"error": f"Could not find country for '{query}'"},
+#                     status=status.HTTP_404_NOT_FOUND
+#                 )
+
+#             data = res.json()[0]
+#             display_name = data.get("display_name", "")
+#             country = display_name.split(",")[-1].strip()
+
+#             result = {
+#                 "place": query,
+#                 "country": country,
+#                 "lat": data.get("lat"),
+#                 "lon": data.get("lon"),
+#             }
+
+#             return Response(
+#                 {"result": result, "id": request.data.get("id")},
+#                 status=status.HTTP_200_OK
+#             )
+
+#         except Exception as e:
+#             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+
+
+
+
+class GeoNationAgent(APIView):
     def post(self, request):
+        data = request.data
+
+        # Accept both Telex and JSON-RPC formats
+        query = (
+            data.get("params", {}).get("query") or
+            data.get("query") or
+            data.get("message")
+        )
+
+        if not query:
+            return Response(
+                {"error": "No query provided. Include 'query' or 'message'."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Call Nominatim API
         try:
-            method = request.data.get("method")
-            params = request.data.get("params", {})
-            query = params.get("query")
+            url = f"https://nominatim.openstreetmap.org/search"
+            params = {"q": query, "format": "json", "limit": 1}
+            response = requests.get(url, params=params)
+            response.raise_for_status()
+            results = response.json()
 
-            if not query:
-                return Response(
-                    {"error": "Missing 'query' parameter"},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+            if not results:
+                return Response({"error": f"Could not find location '{query}'."},
+                                status=status.HTTP_404_NOT_FOUND)
 
-            url = f"https://nominatim.openstreetmap.org/search?q={query}&format=json"
-            headers = {"User-Agent": "GeoNation-Agent/1.0"}
-            res = requests.get(url, headers=headers)
-
-            if res.status_code != 200 or not res.json():
-                return Response(
-                    {"error": f"Could not find country for '{query}'"},
-                    status=status.HTTP_404_NOT_FOUND
-                )
-
-            data = res.json()[0]
-            display_name = data.get("display_name", "")
-            country = display_name.split(",")[-1].strip()
-
+            location = results[0]
             result = {
                 "place": query,
-                "country": country,
-                "lat": data.get("lat"),
-                "lon": data.get("lon"),
+                "country": location.get("display_name").split(",")[-1].strip(),
+                "lat": location.get("lat"),
+                "lon": location.get("lon")
             }
 
+            # Standardized response for both Telex & manual API
             return Response(
-                {"result": result, "id": request.data.get("id")},
+                {"result": result, "id": data.get("id", "1")},
                 status=status.HTTP_200_OK
             )
 
-        except Exception as e:
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+        except requests.RequestException:
+            return Response(
+                {"error": "Failed to fetch data from OpenStreetMap."},
+                status=status.HTTP_502_BAD_GATEWAY
+            )
