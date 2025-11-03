@@ -1,101 +1,80 @@
-import json
 import logging
 import requests
+from django.conf import settings
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 
 logger = logging.getLogger(__name__)
 
-def extract_query(data):
+class GeoNationAgentView(APIView):
     """
-    Extracts the 'query' or 'message' from multiple possible JSON structures.
-    """
-    if not isinstance(data, dict):
-        return None
-
-    # Direct key lookup
-    if 'query' in data:
-        return data['query']
-    if 'message' in data:
-        return data['message']
-
-    # Inside 'params'
-    params = data.get('params', {})
-    if isinstance(params, dict):
-        if 'query' in params:
-            return params['query']
-        if 'message' in params:
-            return params['message']
-
-    # Inside nested 'data' array
-    if 'data' in data and isinstance(data['data'], list):
-        for item in data['data']:
-            q = extract_query(item)
-            if q:
-                return q
-
-    return None
-
-
-class AgentView(APIView):
-    """
-    Handles incoming POST requests from the GeoNation Agent.
-    Extracts query from the request body and returns the corresponding country.
+    Handles requests to retrieve the country of a given city, town, or location name.
     """
 
-    def post(self, request):
+    def get(self, request):
+        location = request.query_params.get("location")
+
+        if not location:
+            logger.warning("No location provided in request.")
+            return Response(
+                {"error": "Please provide a 'location' query parameter."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         try:
-            # Log raw request
-            raw_body = request.body.decode("utf-8")
-            logger.info(f"=== Incoming Request ===\nPath: {request.path}\nBody: {raw_body}")
+            response = requests.get(
+                f"https://nominatim.openstreetmap.org/search",
+                params={"q": location, "format": "json", "addressdetails": 1},
+                headers={"User-Agent": "GeoNationAgent/1.0"},
+                timeout=10,
+            )
 
-            try:
-                data = json.loads(raw_body or "{}")
-            except json.JSONDecodeError:
-                logger.exception("Invalid JSON in request body")
-                return Response({"error": "Invalid JSON body"}, status=status.HTTP_400_BAD_REQUEST)
-
-            query = extract_query(data)
-            if not query:
-                logger.warning("No query provided in request")
+            data = response.json()
+            if not data:
+                logger.info(f"No country found for location: {location}")
                 return Response(
-                    {"error": "No query provided. Include 'query' or 'message'."},
-                    status=status.HTTP_400_BAD_REQUEST
+                    {"message": f"Could not find a country for '{location}'."},
+                    status=status.HTTP_404_NOT_FOUND,
                 )
 
-            # Call external API (RestCountries)
-            api_url = f"https://restcountries.com/v3.1/capital/{query}"
-            response = requests.get(api_url, timeout=10)
+            country = data[0]["address"].get("country", "Unknown")
+            logger.info(f"Location '{location}' found in {country}")
 
-            if response.status_code != 200:
-                logger.error(f"External API error ({response.status_code}): {response.text}")
-                return Response(
-                    {"error": "Failed to fetch country data"},
-                    status=response.status_code
-                )
+            return Response(
+                {"location": location, "country": country},
+                status=status.HTTP_200_OK,
+            )
 
-            countries = response.json()
-            if not countries:
-                logger.info(f"No country found for query: {query}")
-                return Response(
-                    {"message": f"No country found for '{query}'."},
-                    status=status.HTTP_404_NOT_FOUND
-                )
-
-            # Extract readable name
-            country_name = countries[0].get("name", {}).get("common", "Unknown")
-            logger.info(f"Country found for '{query}': {country_name}")
-
-            # Success response
-            return Response({"country": country_name}, status=status.HTTP_200_OK)
-
+        except requests.RequestException as e:
+            logger.error(f"Error fetching data from Nominatim API: {str(e)}")
+            return Response(
+                {"error": "Failed to retrieve data from external API."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
         except Exception as e:
-            logger.exception(f"Unhandled error: {str(e)}")
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.exception(f"Unexpected error: {str(e)}")
+            return Response(
+                {"error": "An unexpected error occurred."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 
+class GeoNationManifestView(APIView):
+    """
+    Provides metadata about the GeoNation Agent service.
+    """
 
+    def get(self, request):
+        manifest_data = {
+            "name": "GeoNation Agent",
+            "version": "1.0.0",
+            "description": "Receives a location name and returns the country it belongs to.",
+            "author": "Okumbor Franklin",
+            "repository": "https://github.com/yourusername/geonation-agent",
+        }
+        logger.debug("Manifest data served successfully.")
+        return Response(manifest_data, status=status.HTTP_200_OK)
 
 
 

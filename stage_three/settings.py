@@ -45,13 +45,11 @@ INSTALLED_APPS = [
 
     'rest_framework',
     'agent',
-    'requests'
 ]
 
 MIDDLEWARE = [
-    'agent.middleware.RequestLoggingMiddleware',  # ✅ add this line
-    
     'django.middleware.security.SecurityMiddleware',
+    'agent.middleware.RequestLoggingMiddleware',  # ✅ add this line
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
