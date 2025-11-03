@@ -126,7 +126,7 @@ class GeoNationManifestView(APIView):
 
 
 
-class GeoNationAgent(APIView):
+class GeoNationAgentView(APIView):
     def post(self, request):
         data = request.data
 
