@@ -6,27 +6,20 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 
-# Use the "agent" logger defined in settings.py
-# logger = logging.getLogger("agent")
 
-
-# ✅ Configure logging for both console (Railway logs) and file
+# ✅ Use the custom "agent" logger defined in settings.py
 logger = logging.getLogger("agent")
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.FileHandler("geonation.log"),  # saves logs to file in container
-        logging.StreamHandler()  # sends logs to console → visible in Railway dashboard
-    ]
-)
 
 
 class GeoNationManifestView(APIView):
     """
     Telex Agent manifest endpoint — describes your agent to Telex.im.
     """
+
+    def get(self, request):
+        """Simple GET endpoint to verify that the service is live."""
+        logger.info("Health check request received at /")
+        return Response({"message": "GeoNation API is live!"}, status=status.HTTP_200_OK)
 
     def post(self, request):
         logger.info("=== Incoming Request to / (Manifest) ===")
@@ -35,21 +28,21 @@ class GeoNationManifestView(APIView):
         logger.info(f"Body: {json.dumps(request.data, indent=2)}")
 
         try:
-            # Extract the query from different possible formats
+            # Extract the query text
             method = request.data.get("method")
             params = request.data.get("params", {})
             query = params.get("query") or request.data.get("query") or request.data.get("message")
 
             if not query:
-                logger.warning("No query provided in request.")
+                logger.warning("No query provided in manifest request.")
                 return Response(
                     {"message": "Please provide the name of a city or town you'd like to know the country for!"},
                     status=status.HTTP_200_OK
                 )
 
-            # Query OpenStreetMap Nominatim API
+            # ✅ Query OpenStreetMap Nominatim API
+            headers = {"User-Agent": "GeoNation/1.0 (contact: okumborfranklin@gmail.com)"}
             url = f"https://nominatim.openstreetmap.org/search?q={query}&format=json"
-            headers = {"User-Agent": "GeoNation-Agent/1.0 (okumborfranklin@gmail.com)"}
             res = requests.get(url, headers=headers, timeout=10)
 
             logger.info(f"Nominatim Request URL: {res.url}")
@@ -65,7 +58,7 @@ class GeoNationManifestView(APIView):
 
             data = res.json()[0]
             display_name = data.get("display_name", "")
-            country = display_name.split(",")[-1].strip()
+            country = display_name.split(",")[-1].strip() if display_name else "Unknown"
 
             result = {
                 "place": query,
@@ -81,24 +74,31 @@ class GeoNationManifestView(APIView):
             return Response(response_data, status=status.HTTP_200_OK)
 
         except Exception as e:
-            logger.exception("Error processing request in Manifest view")
+            logger.exception("Error processing manifest request.")
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class GeoNationAgentView(APIView):
     """
-    The actual GeoNation agent logic endpoint — receives Telex A2A POST calls.
+    GeoNation agent logic endpoint — receives Telex A2A POST calls and returns country information.
     """
+
+    def get(self, request):
+        """Simple GET endpoint to verify that the agent endpoint is active."""
+        logger.info("Health check request received at /agent/")
+        return Response({"message": "GeoNation Agent is running!"}, status=status.HTTP_200_OK)
 
     def post(self, request):
         logger.info("=== Incoming Request to /agent/ ===")
         logger.info(f"Timestamp: {now()}")
         logger.info(f"Headers: {dict(request.headers)}")
+
         try:
             body_str = request.body.decode("utf-8")
             logger.debug(f"Raw Body: {body_str}")
         except Exception:
             body_str = "<unreadable>"
+
         logger.info(f"Parsed Body: {json.dumps(request.data, indent=2)}")
 
         data = request.data
@@ -108,6 +108,20 @@ class GeoNationAgentView(APIView):
             or data.get("message")
         )
 
+        # Handle Telex A2A structured message format
+        if not query:
+            message = data.get("params", {}).get("message", {})
+            parts = message.get("parts", [])
+            if parts and isinstance(parts, list):
+                for part in parts:
+                    if part.get("kind") == "text" and "text" in part:
+                        text_value = part["text"].strip()
+                        if text_value.startswith("/geonation_agent"):
+                            query = text_value.replace("/geonation_agent", "").strip()
+                        else:
+                            query = text_value
+                        break
+
         if not query:
             logger.warning("No query provided in agent request.")
             return Response(
@@ -116,8 +130,8 @@ class GeoNationAgentView(APIView):
             )
 
         try:
-            # Query OpenStreetMap Nominatim API
-            headers = {"User-Agent": "GeoNation/1.0 (okumborfranklin@gmail.com)"}
+            # ✅ Query OpenStreetMap API
+            headers = {"User-Agent": "GeoNation/1.0 (contact: okumborfranklin@gmail.com)"}
             response = requests.get(
                 "https://nominatim.openstreetmap.org/search",
                 params={"q": query, "format": "json"},
@@ -140,9 +154,12 @@ class GeoNationAgentView(APIView):
                 )
 
             location = results[0]
+            display_name = location.get("display_name", "")
+            country = display_name.split(",")[-1].strip() if display_name else "Unknown"
+
             result = {
                 "place": query,
-                "country": location.get("display_name").split(",")[-1].strip(),
+                "country": country,
                 "lat": location.get("lat"),
                 "lon": location.get("lon")
             }
@@ -152,16 +169,16 @@ class GeoNationAgentView(APIView):
 
             return Response(response_payload, status=status.HTTP_200_OK)
 
-        except requests.RequestException as e:
+        except requests.RequestException:
             logger.exception("Error fetching data from OpenStreetMap.")
             return Response(
                 {"error": "Failed to fetch data from OpenStreetMap."},
                 status=status.HTTP_502_BAD_GATEWAY
             )
+
         except Exception as e:
             logger.exception("Unexpected error in GeoNationAgentView.")
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
 
 
 
