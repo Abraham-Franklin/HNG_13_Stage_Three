@@ -94,6 +94,7 @@ class GeoNationAgentAPIView(APIView):
             result = {
                 "response": response_message,
                 "text": response_message,
+                "message": response_message,
                 "query": query,
                 "country": info.get("display_name", "").split(",")[-1].strip(),
                 "latitude": info.get("lat"),
