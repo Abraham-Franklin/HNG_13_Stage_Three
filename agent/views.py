@@ -84,10 +84,13 @@ class GeoNationAgentAPIView(APIView):
                     "id": rpc_id
                 }, status=status.HTTP_200_OK)
 
-            ✅ This part makes Telex display a readable message
-            response_message = f"{query} is located in {country}."
 
             info = response.json()[0]
+
+            # ✅ This part makes Telex display a readable message
+            country = info.get("display_name", "").split(",")[-1].strip()
+            response_message = f"{query} is located in {country}."
+            
             result = {
                 "response": response_message,
                 "query": query,
