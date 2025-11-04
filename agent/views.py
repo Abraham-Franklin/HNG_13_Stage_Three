@@ -28,23 +28,55 @@ class GeoNationAgentAPIView(APIView):
     """
 
     def post(self, request):
-                # Fetch country data from OpenStreetMap Nominatim
+        logger.info("=== Incoming A2A POST Request ===")
+
+        data = request.data
+        logger.debug(f"Raw incoming data: {data}")
+
+        # Try to extract query in a flexible manner
+        query = None
+        rpc_id = None
+
         try:
-            logger.info(f"Attempting lookup for query: {query}")
-            url = f"https://nominatim.openstreetmap.org/search?format=json&q={query}&limit=1"
-            logger.info(f"Calling URL: {url}")
-            response = requests.get(url, headers={"User-Agent": "GeoNationAgent/1.0"})
+            if isinstance(data, dict):
+                rpc_id = data.get("id")
+
+                # JSON-RPC structured request
+                if "params" in data and isinstance(data["params"], dict):
+                    query = data["params"].get("query")
+
+                # Direct query field
+                elif "query" in data:
+                    query = data.get("query")
+
+                # Telex-style A2A format (wrapped inside data)
+                elif "data" in data and isinstance(data["data"], dict):
+                    query = data["data"].get("query")
+        except Exception as parse_err:
+            logger.error(f"Error parsing incoming data: {parse_err}")
+            return Response({
+                "jsonrpc": "2.0",
+                "error": {"code": -32600, "message": "Invalid JSON structure"},
+                "id": rpc_id
+            }, status=status.HTTP_200_OK)
+
+        if not query:
+            logger.warning("Missing 'query' parameter in request")
+            return Response({
+                "jsonrpc": "2.0",
+                "error": {"code": -32602, "message": "Missing 'query' parameter"},
+                "id": rpc_id
+            }, status=status.HTTP_200_OK)
+
+        # Fetch country data from OpenStreetMap Nominatim
+        try:
+            response = requests.get(
+                f"https://nominatim.openstreetmap.org/search?format=json&q={query}",
+                headers={"User-Agent": "GeoNationAgent/1.0"}
+            )
             logger.info(f"Nominatim response code: {response.status_code}")
 
-            # Try to read JSON safely
-            try:
-                data_json = response.json()
-                logger.debug(f"Nominatim raw JSON: {data_json}")
-            except Exception as json_err:
-                logger.error(f"Failed to parse JSON: {json_err}")
-                raise Exception("Invalid JSON response from Nominatim")
-
-            if response.status_code != 200 or not data_json:
+            if response.status_code != 200 or not response.json():
                 logger.warning(f"No result found for query: {query}")
                 return Response({
                     "jsonrpc": "2.0",
@@ -52,7 +84,7 @@ class GeoNationAgentAPIView(APIView):
                     "id": rpc_id
                 }, status=status.HTTP_200_OK)
 
-            info = data_json[0]
+            info = response.json()[0]
             result = {
                 "query": query,
                 "country": info.get("display_name", "").split(",")[-1].strip(),
@@ -68,7 +100,7 @@ class GeoNationAgentAPIView(APIView):
             }, status=status.HTTP_200_OK)
 
         except Exception as e:
-            logger.exception(f"Error during API call or processing: {e}")
+            logger.exception("Error during API call")
             return Response({
                 "jsonrpc": "2.0",
                 "error": {"code": -32000, "message": f"Server error: {str(e)}"},
