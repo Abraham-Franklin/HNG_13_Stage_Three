@@ -1,16 +1,7 @@
-# from django.urls import path
-# from .views import GeoNationAgentView
-
-# urlpatterns = [
-#     path("", GeoNationAgentView.as_view(), name="agent-view")
-# ]
-
-
 from django.urls import path
-from .views import GeoNationAgentView, GeoNationManifestView
+from .views import RootView, GeoNationAgentAPIView
 
 urlpatterns = [
-    path("", GeoNationManifestView.as_view(), name="manifest"),
-    path("agent/", GeoNationAgentView.as_view(), name="agent-view"),
-    # path("agent", GeoNationAgentView.as_view(), name="agent-view"),
+    path("", RootView.as_view(), name="root"),
+    path("agent/", GeoNationAgentAPIView.as_view(), name="agent"),
 ]

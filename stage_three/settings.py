@@ -131,6 +131,48 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 
+# LOGGING = {
+#     "version": 1,
+#     "disable_existing_loggers": False,
+#     "formatters": {
+#         "verbose": {
+#             "format": "[{asctime}] {levelname} {name}: {message}",
+#             "style": "{",
+#         },
+#         "simple": {
+#             "format": "{levelname}: {message}",
+#             "style": "{",
+#         },
+#     },
+#     "handlers": {
+#         "file": {
+#             "level": "DEBUG",
+#             "class": "logging.FileHandler",
+#             "filename": os.path.join(BASE_DIR, "geonation.log"),
+#             "formatter": "verbose",
+#         },
+#         "console": {
+#             "level": "INFO",
+#             "class": "logging.StreamHandler",
+#             "formatter": "simple",
+#         },
+#     },
+#     "loggers": {
+#         "django": {
+#             "handlers": ["console"],
+#             "level": "INFO",
+#         },
+#         "agent": {  # your custom logger for GeoNation agent
+#             "handlers": ["file", "console"],
+#             "level": "DEBUG",
+#             "propagate": False,
+#         },
+#     },
+# }
+
+
+import sys
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
@@ -140,32 +182,37 @@ LOGGING = {
             "style": "{",
         },
         "simple": {
-            "format": "{levelname}: {message}",
+            "format": "{levelname} {message}",
             "style": "{",
         },
     },
     "handlers": {
-        "file": {
-            "level": "DEBUG",
-            "class": "logging.FileHandler",
-            "filename": os.path.join(BASE_DIR, "geonation.log"),
+        "console": {
+            "class": "logging.StreamHandler",
+            "stream": sys.stdout,
             "formatter": "verbose",
         },
-        "console": {
-            "level": "INFO",
-            "class": "logging.StreamHandler",
-            "formatter": "simple",
-        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": "INFO",  # change to DEBUG if you want more details
     },
     "loggers": {
         "django": {
             "handlers": ["console"],
             "level": "INFO",
+            "propagate": True,
         },
-        "agent": {  # your custom logger for GeoNation agent
-            "handlers": ["file", "console"],
+        "requests": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        "geonation": {  # your app name here
+            "handlers": ["console"],
             "level": "DEBUG",
             "propagate": False,
         },
     },
 }
+
