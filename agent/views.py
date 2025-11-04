@@ -92,6 +92,7 @@ class GeoNationAgentAPIView(APIView):
             response_message = f"{query} is located in {country}."
 
             result = {
+                "status": "success",
                 "response": response_message,
                 "text": response_message,
                 "message": response_message,
